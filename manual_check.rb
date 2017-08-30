@@ -1,5 +1,5 @@
 require_relative '../random_scripts/csv.rb'
-require_relative '../PDFLinkExtractor/extract_links.rb'
+require_relative 'extract_links.rb'
 require 'find'
 require 'pry'
 
