@@ -1,8 +1,9 @@
-require_relative 'column_pdf'
+# require_relative 'column_pdf'
 require "pdf/reader"
 require 'uri'
 require 'open-uri'
 require 'open_uri_redirections'
+require 'nokogiri'
 require 'pry'
 
 module CSVAble
@@ -30,7 +31,7 @@ class ConferenceList
   attr_accessor :conferences
 
   def to_csv
-    props = ["Conf", "Ed", "Paper", "URL", "Code", "Suspicious", "Live", "Ref", "DOI", "Type"]
+    props = ["Conf", "Ed", "Paper", "URL", "Code", "Suspicious", "Live", "Ref", "DOI", "Type", "Validated"]
     to_csv_line(props) + to_csv_list(@conferences)
   end
 
@@ -82,20 +83,42 @@ class Paper
     @urls = []
   end
 
+  # def parse_urls_old
+  #   reader = PDF::Reader.new(@file)
+  #   in_references = false
+  #   reader.pages.each do |page|
+  #     text = page.text
+  #     puts text
+  #     if text.include? "References" # this is a super-rough heuristic for whether a link appears in the refs
+  #       in_references = true
+  #     end
+  #     urls = URI.extract(text, ['http', 'https']).map do |url|
+  #       tmp_url = URL.new(@conference, @edition, self, url, in_references).sanitize.evaluate_liveness
+  #     end
+  #     @urls += urls unless urls.size == 0
+  #   end
+  # end
+
   def parse_urls
-    reader = PDF::Reader.new(@file)
-    in_references = false
-    reader.pages.each do |page|
-      text = page.text
-      puts text
-      if text.include? "References" # this is a super-rough heuristic for whether a link appears in the refs
-        in_references = true
-      end
-      urls = URI.extract(text, ['http', 'https']).map do |url|
-        URL.new(@conference, @edition, self, url, in_references).sanitize.evaluate_liveness
-      end
-      @urls += urls unless urls.size == 0
+    STDERR.puts "In paper #{@file}"
+    cmd = "pdftohtml -xml #{@file} -stdout"
+    xml = `#{cmd}`
+    doc = Nokogiri::XML.parse(xml)
+    buffer = ""
+    doc.xpath("//text/text()").each do |text|
+      buffer += text
+      buffer += " "
     end
+    buffer.gsub!("- ", "")
+    # STDERR.puts buffer
+    urls = URI.extract(buffer, ['http', 'https']).map do |url|
+      begin
+        URL.new(@conference, @edition, self, url, in_references?(url, buffer)).sanitize.evaluate_liveness
+      rescue
+        STDERR.puts "Error in #{url}"
+      end
+    end
+    @urls += urls unless urls.size == 0
   end
 
   def to_csv
@@ -106,12 +129,35 @@ class Paper
     @paper
   end
 
+  private
+
+  def in_references?(url, text)
+    urlidx = text.index(url)
+    refidx = text.index("References")
+    refidx ||= text.index("REFERENCES")
+    if !refidx || !urlidx
+      STDERR.puts "Error fetching refs: #{refidx} - #{urlidx}"
+      return false
+    end
+    refidx < urlidx
+  end
+
 end
 
 class URL
   include CSVAble
 
   attr_reader :url
+  attr_accessor :validated
+
+  def self.initialize_from_strings(conference, edition, paper, urlstring, in_references)
+    conf = Conference.new
+    conf.title = conference
+    ed = Edition.new
+    ed.year = edition
+    pap = Paper.new(conf, ed, paper)
+    URL.new(conf, ed, pap, urlstring, in_references)
+  end
 
   def initialize(conference, edition, paper, urlstring, in_references)
       @conference = conference
@@ -120,6 +166,7 @@ class URL
       @url = urlstring
       @response_code = -1
       @ref = in_references
+      @validated = false
   end
 
   def evaluate_liveness
@@ -143,7 +190,7 @@ class URL
 
   def sanitize
     # add here all kinds of line ending sanitizations that turn out to be necessary
-    @url = "http://garbo" unless @url.start_with?("http://") || @url.start_with?("https://")
+    # @url = "http://garbo" unless @url.start_with?("http://") || @url.start_with?("https://")
     @url.chomp!(",")
     @url.chomp!(".")
     @url.chomp!(")")
@@ -151,7 +198,7 @@ class URL
   end
 
   def suspicious?
-    @url == "http://garbo" || @url == "http://" || @url == "http://www" || @url.end_with?("-")
+    @url == "http://garbo" || @url == "http://" || @url == "http://www" || @url.end_with?("-") || @url.end_with?("]")
   end
 
   def live?
@@ -179,9 +226,13 @@ class URL
   end
 
   def to_csv
-    props = [@conference, @edition, @paper, @url, @response_code,
-      suspicious?, live?, in_refs?, is_doi?, hosting_type]
+    props = content_list
     to_csv_line props
+  end
+
+  def content_list
+    [@conference, @edition, @paper, @url, @response_code,
+      suspicious?, live?, in_refs?, is_doi?, hosting_type, @validated]
   end
 
 end

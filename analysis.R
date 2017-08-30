@@ -2,10 +2,26 @@ library(ggplot2)
 library(grid)
 library(gridExtra)
 
-data <- read.csv('/Users/philipp/git_repos/projects/PDFLinkExtractor/ICSE.csv', sep = ";")
+data <- read.csv('/Users/philipp/git_repos/projects/PDFLinkExtractor/ICSE_cleaned.csv', sep = ";")
+data <- data[data$Code != 666,]
 
 
-data <- data[data$Suspicious != "true",]
+data$DOIStat = (data$DOI == "true")
+data$DOIStat = factor(data$DOIStat)
+data$RefStat = (data$Ref == "true")
+data$RefStat = factor(data$RefStat)
+data$Code <- factor(data$Code)
+data$Ed <- factor(data$Ed)
+
+
+g <- ggplot(data, aes(x = Ed))
+p <- g + geom_bar(aes(fill = DOIStat))
+print(p)
+g <- ggplot(data, aes(x = Ed))
+p <- g + geom_bar(aes(fill = RefStat))
+print(p)
+
+# data <- data[data$Suspicious != "true",]
 data <- data[data$DOI != "true",]
 
 df <- data.frame("Ed"=integer(),
@@ -35,11 +51,22 @@ print(p)
 
 data <- data[data$Code != 200,]
 
-data$Code <- factor(data$Code)
-data$Ed <- factor(data$Ed)
+df <- data.frame("Ed"=integer(),
+                 "Code"=character(),
+                 "Frac"=double(),
+                 stringsAsFactors=FALSE) 
+eds <- unique(data$Ed)
+for(ed in eds) {
+  codes <- unique(data[data$Ed == ed,]$Code)
+  all <- nrow(data[data$Ed == ed,])
+  for(code in codes) {
+     this <- nrow(data[data$Ed == ed & data$Code == code,])
+     df[nrow(df) + 1, ] <- list(ed, code, (this/all))
+  }
+}
+df$Code <- factor(df$Code)
+df$Ed <- factor(df$Ed)
 
-
-
-g <- ggplot(data, aes(Ed))
-p <- g + geom_bar(aes(fill = Code))
+g <- ggplot(df, aes(x = Ed, y = Frac))
+p <- g + geom_bar(aes(fill = Code), stat = "identity")
 print(p)
